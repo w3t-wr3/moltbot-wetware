@@ -219,6 +219,19 @@ if (process.env.CF_AI_GATEWAY_MODEL) {
     }
 }
 
+// OpenRouter configuration
+// Adds OpenRouter as an OpenAI-compatible provider so /models lists its models
+if (process.env.OPENROUTER_API_KEY) {
+    config.models = config.models || {};
+    config.models.providers = config.models.providers || {};
+    config.models.providers['openrouter'] = {
+        baseUrl: 'https://openrouter.ai/api/v1',
+        apiKey: process.env.OPENROUTER_API_KEY,
+        api: 'openai-completions',
+    };
+    console.log('OpenRouter provider configured');
+}
+
 // Telegram configuration
 // Overwrite entire channel object to drop stale keys from old R2 backups
 // that would fail OpenClaw's strict config validation (see #47)
