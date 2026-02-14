@@ -162,6 +162,9 @@ config.gateway.trustedProxies = ['10.1.0.0'];
 if (process.env.OPENCLAW_GATEWAY_TOKEN) {
     config.gateway.auth = config.gateway.auth || {};
     config.gateway.auth.token = process.env.OPENCLAW_GATEWAY_TOKEN;
+} else {
+    // Clear any persisted token auth so the gateway starts without it
+    delete config.gateway.auth;
 }
 
 if (process.env.OPENCLAW_DEV_MODE === 'true') {
