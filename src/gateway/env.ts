@@ -37,9 +37,10 @@ export function buildEnvVars(env: MoltbotEnv): Record<string, string> {
     envVars.ANTHROPIC_BASE_URL = env.ANTHROPIC_BASE_URL;
   }
 
-  // Gateway token auth is disabled — Cloudflare Access authenticates all traffic at the edge,
-  // and sandbox.wsConnect() does not reliably forward URL query params to the container.
-  // If re-enabling, investigate how to pass the token via headers or subprotocol instead.
+  // Gateway token: map MOLTBOT_GATEWAY_TOKEN → OPENCLAW_GATEWAY_TOKEN for the container.
+  // The worker injects this token into WebSocket URLs via ?token= before sandbox.wsConnect().
+  if (env.MOLTBOT_GATEWAY_TOKEN) envVars.OPENCLAW_GATEWAY_TOKEN = env.MOLTBOT_GATEWAY_TOKEN;
+
   if (env.DEV_MODE) envVars.OPENCLAW_DEV_MODE = env.DEV_MODE;
   if (env.TELEGRAM_BOT_TOKEN) envVars.TELEGRAM_BOT_TOKEN = env.TELEGRAM_BOT_TOKEN;
   if (env.TELEGRAM_DM_POLICY) envVars.TELEGRAM_DM_POLICY = env.TELEGRAM_DM_POLICY;
