@@ -244,7 +244,7 @@ if (process.env.OPENROUTER_API_KEY) {
         config.agents.defaults = config.agents.defaults || {};
         config.agents.defaults.model = config.agents.defaults.model || {};
         config.agents.defaults.model.primary = 'openrouter/minimax/minimax-m2.5';
-        // Make Anthropic models selectable via OpenRouter (no fallback — just available for manual switch)
+        // OpenRouter models selectable via /model command
         config.agents.defaults.models = config.agents.defaults.models || {};
         config.agents.defaults.models['openrouter/minimax/minimax-m2.5'] = {};
         config.agents.defaults.models['openrouter/anthropic/claude-opus-4-6'] = {};
@@ -254,6 +254,28 @@ if (process.env.OPENROUTER_API_KEY) {
     } else {
         console.log('OpenRouter provider configured (AI Gateway model override active)');
     }
+}
+
+// Anthropic direct provider (uses ANTHROPIC_API_KEY)
+// Registers Anthropic models as selectable alongside OpenRouter models
+if (process.env.ANTHROPIC_API_KEY) {
+    config.models = config.models || {};
+    config.models.providers = config.models.providers || {};
+    config.models.providers['anthropic'] = {
+        api: 'anthropic-messages',
+        models: [
+            { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', contextWindow: 200000, maxTokens: 32000 },
+            { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5', contextWindow: 200000, maxTokens: 16000 },
+            { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5', contextWindow: 200000, maxTokens: 8192 },
+        ],
+    };
+    config.agents = config.agents || {};
+    config.agents.defaults = config.agents.defaults || {};
+    config.agents.defaults.models = config.agents.defaults.models || {};
+    config.agents.defaults.models['anthropic/claude-opus-4-6'] = {};
+    config.agents.defaults.models['anthropic/claude-sonnet-4-5'] = {};
+    config.agents.defaults.models['anthropic/claude-haiku-4-5'] = {};
+    console.log('Anthropic direct provider configured (+3 selectable models)');
 }
 
 // Telegram configuration
