@@ -328,36 +328,17 @@ app.all('*', async (c) => {
       console.log('[WS] serverWs.readyState:', serverWs.readyState);
     }
 
-    // Relay messages from client to container, injecting gateway token
-    // into the connect frame so the gateway authenticates the connection.
+    // Relay messages from client to container
     serverWs.addEventListener('message', (event) => {
-      let data = event.data;
       if (debugLogs) {
         console.log(
           '[WS] Client -> Container:',
-          typeof data,
-          typeof data === 'string' ? data.slice(0, 200) : '(binary)',
+          typeof event.data,
+          typeof event.data === 'string' ? event.data.slice(0, 200) : '(binary)',
         );
       }
-
-      // Inject gateway token into the connect frame
-      if (typeof data === 'string' && c.env.MOLTBOT_GATEWAY_TOKEN) {
-        try {
-          const parsed = JSON.parse(data);
-          if (parsed.type === 'req' && parsed.method === 'connect' && parsed.params) {
-            parsed.params.token = c.env.MOLTBOT_GATEWAY_TOKEN;
-            data = JSON.stringify(parsed);
-            if (debugLogs) {
-              console.log('[WS] Injected gateway token into connect frame');
-            }
-          }
-        } catch {
-          // Not JSON, relay as-is
-        }
-      }
-
       if (containerWs.readyState === WebSocket.OPEN) {
-        containerWs.send(data);
+        containerWs.send(event.data);
       } else if (debugLogs) {
         console.log('[WS] Container not open, readyState:', containerWs.readyState);
       }
