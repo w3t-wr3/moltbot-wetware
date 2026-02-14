@@ -228,6 +228,7 @@ if (process.env.OPENROUTER_API_KEY) {
         baseUrl: 'https://openrouter.ai/api/v1',
         apiKey: process.env.OPENROUTER_API_KEY,
         api: 'openai-completions',
+        models: [],
     };
     console.log('OpenRouter provider configured');
 }
