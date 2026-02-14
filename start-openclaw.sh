@@ -110,6 +110,8 @@ if [ ! -f "$CONFIG_FILE" ]; then
             --cloudflare-ai-gateway-account-id $CF_AI_GATEWAY_ACCOUNT_ID \
             --cloudflare-ai-gateway-gateway-id $CF_AI_GATEWAY_GATEWAY_ID \
             --cloudflare-ai-gateway-api-key $CLOUDFLARE_AI_GATEWAY_API_KEY"
+    elif [ -n "$OPENROUTER_API_KEY" ]; then
+        AUTH_ARGS="--auth-choice apiKey --token-provider openrouter --token $OPENROUTER_API_KEY"
     elif [ -n "$ANTHROPIC_API_KEY" ]; then
         AUTH_ARGS="--auth-choice apiKey --anthropic-api-key $ANTHROPIC_API_KEY"
     elif [ -n "$OPENAI_API_KEY" ]; then
@@ -170,6 +172,8 @@ if (process.env.OPENCLAW_GATEWAY_TOKEN) {
 if (process.env.OPENCLAW_DEV_MODE === 'true') {
     config.gateway.controlUi = config.gateway.controlUi || {};
     config.gateway.controlUi.allowInsecureAuth = true;
+} else if (config.gateway.controlUi) {
+    delete config.gateway.controlUi.allowInsecureAuth;
 }
 
 // Legacy AI Gateway base URL override:
@@ -223,7 +227,7 @@ if (process.env.CF_AI_GATEWAY_MODEL) {
 }
 
 // OpenRouter configuration
-// Adds OpenRouter as an OpenAI-compatible provider so /models lists its models
+// Adds OpenRouter as an OpenAI-compatible provider and sets default model
 if (process.env.OPENROUTER_API_KEY) {
     config.models = config.models || {};
     config.models.providers = config.models.providers || {};
@@ -233,7 +237,23 @@ if (process.env.OPENROUTER_API_KEY) {
         api: 'openai-completions',
         models: [],
     };
-    console.log('OpenRouter provider configured');
+
+    // Set OpenRouter as default model provider (unless AI Gateway model override is active)
+    if (!process.env.CF_AI_GATEWAY_MODEL) {
+        config.agents = config.agents || {};
+        config.agents.defaults = config.agents.defaults || {};
+        config.agents.defaults.model = config.agents.defaults.model || {};
+        config.agents.defaults.model.primary = 'openrouter/minimax/minimax-m2.5';
+        // Make Anthropic models selectable via OpenRouter (no fallback — just available for manual switch)
+        config.agents.defaults.models = config.agents.defaults.models || {};
+        config.agents.defaults.models['openrouter/minimax/minimax-m2.5'] = {};
+        config.agents.defaults.models['openrouter/anthropic/claude-opus-4-6'] = {};
+        config.agents.defaults.models['openrouter/anthropic/claude-sonnet-4-5'] = {};
+        config.agents.defaults.models['openrouter/anthropic/claude-haiku-3.5'] = {};
+        console.log('OpenRouter provider configured (default model: openrouter/minimax/minimax-m2.5, +3 selectable)');
+    } else {
+        console.log('OpenRouter provider configured (AI Gateway model override active)');
+    }
 }
 
 // Telegram configuration
