@@ -92,37 +92,9 @@ export async function ensureMoltbotGateway(sandbox: Sandbox, env: MoltbotEnv): P
   console.log('Starting new OpenClaw gateway...');
   const envVars = buildEnvVars(env);
 
-  // Wrap the startup script to fix provider config validation issues.
-  // The baked-in start-openclaw.sh may create provider entries without the
-  // required `models` array (e.g., OpenRouter). This wrapper catches that
-  // failure and patches the config before retrying the gateway directly.
-  const command = `bash -c '/usr/local/bin/start-openclaw.sh || {
-    echo "[recovery] Startup script failed, attempting config fix...";
-    node -e "
-      const fs = require(\\\"fs\\\");
-      const p = \\\"/root/.openclaw/openclaw.json\\\";
-      try {
-        const c = JSON.parse(fs.readFileSync(p, \\\"utf8\\\"));
-        let fixed = false;
-        if (c.models && c.models.providers) {
-          for (const [k, v] of Object.entries(c.models.providers)) {
-            if (!v.models) { v.models = []; fixed = true; }
-          }
-        }
-        if (fixed) {
-          fs.writeFileSync(p, JSON.stringify(c, null, 2));
-          console.log(\\\"[recovery] Fixed missing models arrays in provider config\\\");
-        }
-      } catch (e) { console.error(\\\"[recovery] Config fix failed:\\\", e); }
-    ";
-    TOKEN_ARG="";
-    if [ -n "$OPENCLAW_GATEWAY_TOKEN" ]; then
-      TOKEN_ARG="--token $OPENCLAW_GATEWAY_TOKEN";
-    fi;
-    exec openclaw gateway --port 18789 --verbose --allow-unconfigured --bind lan $TOKEN_ARG;
-  }'`;
+  const command = '/usr/local/bin/start-openclaw.sh';
 
-  console.log('Starting process with wrapped command');
+  console.log('Starting process with command:', command);
   console.log('Environment vars being passed:', Object.keys(envVars));
 
   let process: Process;
