@@ -876,6 +876,212 @@ npx wrangler tail
 # - Invalid secret format (check MOLTBOT_GATEWAY_TOKEN is hex, no special chars)
 # - OpenClaw version incompatibility
 # - R2 credentials wrong (container starts but can't restore config)
+# - Config validation error (see "Config invalid" gotcha below)
+```
+
+### If gateway is stuck / port in use
+
+This is common after killing the gateway or failed restarts:
+
+```bash
+# Temporarily enable debug routes, then:
+# 1. Find the stuck gateway process
+curl "https://your-worker.workers.dev/debug/cli?cmd=ps%20aux%20|%20grep%20openclaw-gateway%20|%20grep%20-v%20grep"
+
+# 2. Kill it by PID
+curl "https://your-worker.workers.dev/debug/cli?cmd=kill%20-9%20PID_HERE"
+
+# 3. Remove lock files (BOTH locations)
+curl "https://your-worker.workers.dev/debug/cli?cmd=rm%20-f%20/tmp/openclaw-gateway.lock%20/root/.openclaw/gateway.lock"
+
+# 4. Verify port is free
+curl "https://your-worker.workers.dev/debug/cli?cmd=netstat%20-tlnp%202>/dev/null%20|%20grep%2018789%20||%20echo%20port-free"
+
+# 5. Hit the root URL to trigger a fresh startup
+curl "https://your-worker.workers.dev/"
+```
+
+### If Telegram stops responding after secret changes
+
+Each `wrangler secret put` call causes a brief worker restart. If you update multiple secrets in quick succession, the container may lose its gateway process. Check:
+
+```bash
+curl "https://your-worker.workers.dev/api/status"
+# If "not_running" — just hit any URL to trigger restart
+# Cold start takes 60-90 seconds
+```
+
+---
+
+## 18. Gotchas & Hard-Won Lessons
+
+These are real problems we hit during deployment. Each one cost hours to debug. Read this section before you start.
+
+### 18.1 Container processes survive Durable Object resets
+
+**The problem:** You'd think killing the Durable Object (via admin API or redeployment) would kill all processes inside the container. It doesn't. The gateway process (and any orphaned startup scripts) keep running with their original environment variables.
+
+**Why it matters:** If you change a secret (like `TELEGRAM_BOT_TOKEN`) and redeploy, the old gateway process is still running with the OLD token. The new startup script can't start because the old process holds port 18789.
+
+**The fix:** You must kill the actual process inside the container:
+```bash
+# Find the PID
+curl ".../debug/cli?cmd=ps%20aux%20|%20grep%20openclaw-gateway"
+# Kill it
+curl ".../debug/cli?cmd=kill%20-9%20PID"
+# Clear BOTH lock files
+curl ".../debug/cli?cmd=rm%20-f%20/tmp/openclaw-gateway.lock%20/root/.openclaw/gateway.lock"
+```
+
+### 18.2 R2 restore overwrites your config patches
+
+**The problem:** The startup flow is: R2 restore → config patch → start gateway. If you manually fix the config inside the container, R2 sync backs it up. But on the NEXT container restart, R2 restore pulls back an OLDER version of the config (from before your fix synced), and then the config patching step runs again.
+
+**Why it matters:** Any fix you make to `openclaw.json` inside the container is temporary. It will be overwritten on the next restart unless the fix is also in `start-openclaw.sh`.
+
+**The fix:** Always make config changes in TWO places:
+1. Patch the running container config (for immediate effect)
+2. Update `start-openclaw.sh` (for persistence across restarts)
+
+### 18.3 OpenClaw requires `baseUrl` on ALL providers
+
+**The problem:** If you register a provider in `openclaw.json` without a `baseUrl` field, OpenClaw's config validator rejects the entire config and the gateway refuses to start. The error is:
+```
+models.providers.anthropic.baseUrl: Invalid input: expected string, received undefined
+Config invalid
+```
+
+**Why it matters:** The gateway silently fails. The status endpoint shows "not_running" with no obvious cause unless you check the process stderr logs.
+
+**The fix:** Every provider entry MUST have `baseUrl`:
+```javascript
+config.models.providers['anthropic'] = {
+    baseUrl: 'https://api.anthropic.com',  // ← REQUIRED even for well-known providers
+    api: 'anthropic-messages',
+    models: [...]
+};
+```
+
+### 18.4 `CF_ACCESS_AUD` is NOT the Application ID
+
+**The problem:** The Cloudflare Access dashboard shows both an "Application ID" (UUID format like `b35f634e-...`) and an "Application Audience (AUD) tag" (hex string like `596185037...`). They look similar but are completely different values.
+
+**Why it matters:** Using the Application ID instead of the AUD tag causes `JWTClaimValidationFailed: unexpected "aud" claim value` — every authenticated request fails, and you can't access the admin UI.
+
+**The fix:** In the CF Access dashboard, look for "Application Audience (AUD) Tag" specifically. It's a long hex string, NOT the UUID.
+
+### 18.5 `wrangler delete` wipes ALL secrets
+
+**The problem:** Running `wrangler delete --force` deletes the worker AND all its secrets. When you redeploy, you start with zero secrets.
+
+**Why it matters:** You'll need to re-set every single secret (we had 11). If you don't have them saved somewhere, you'll need to regenerate them all.
+
+**The fix:** Before deleting a worker, document all your secrets. Better yet, keep them in a password manager. After redeploying:
+```bash
+# You must re-set ALL of these:
+npx wrangler secret put OPENROUTER_API_KEY
+npx wrangler secret put MOLTBOT_GATEWAY_TOKEN
+npx wrangler secret put CF_ACCESS_TEAM_DOMAIN
+npx wrangler secret put CF_ACCESS_AUD
+npx wrangler secret put CF_ACCOUNT_ID
+npx wrangler secret put R2_ACCESS_KEY_ID
+npx wrangler secret put R2_SECRET_ACCESS_KEY
+npx wrangler secret put TELEGRAM_BOT_TOKEN
+npx wrangler secret put DEV_MODE          # false
+npx wrangler secret put DEBUG_ROUTES      # false
+```
+
+### 18.6 CI build tokens get invalidated when you delete/recreate a worker
+
+**The problem:** If you delete a worker and redeploy it, the CI build token (used by GitHub Actions to build the container image) gets invalidated. CI deployments fail with:
+```
+The build token selected for this build has been deleted or rolled and cannot be used for this build.
+```
+
+**The fix:** Go to Cloudflare dashboard → Workers & Pages → your worker → Settings → Builds → regenerate the build token. Then update your GitHub Actions secret if needed.
+
+### 18.7 Secret changes cause brief Telegram outages
+
+**The problem:** Each call to `wrangler secret put` triggers a worker restart. During the restart (a few seconds), the worker can't proxy requests. If you change 5 secrets in a row, that's 5 brief outages.
+
+**Why it matters:** Your Telegram bot goes silent for a few seconds each time. Users might think it's broken.
+
+**The fix:** Batch your secret changes. Use the Cloudflare API to set multiple secrets quickly rather than running `wrangler secret put` interactively for each one. The container and gateway process persist through worker restarts — only the worker proxy layer cycles.
+
+### 18.8 Device token mismatch after gateway restart
+
+**The problem:** When you kill and restart the gateway process, browser clients that were previously paired get `device_token_mismatch` errors. The WebSocket connection fails repeatedly.
+
+**Why it matters:** Users see "disconnected (1008): unauthorized: device token mismatch" and can't use the web UI.
+
+**The fix:** Users must clear their browser's site data (cookies + localStorage) for the worker URL, then reload and re-pair. Telegram connections are not affected — only browser/webchat clients.
+
+### 18.9 Telegram token errors are silent
+
+**The problem:** If your `TELEGRAM_BOT_TOKEN` is wrong, the gateway starts fine and everything looks healthy. But the Telegram channel silently fails in the background. The only evidence is in the gateway's stderr:
+```
+[telegram] deleteMyCommands failed: Call to 'deleteMyCommands' failed! (401: Unauthorized)
+[telegram] [default] channel exited: Call to 'getMe' failed! (401: Unauthorized)
+```
+
+**Why it matters:** You'll think everything is working until someone tries to message the bot and gets no response.
+
+**The fix:** After setting `TELEGRAM_BOT_TOKEN`, always verify by checking the gateway logs:
+```bash
+curl ".../debug/logs?id=PROCESS_ID"
+# Look for [telegram] lines in stderr
+# Good: "[telegram] [default] starting provider (@yourbotname)"
+# Bad: "[telegram] ... 401: Unauthorized"
+```
+
+### 18.10 The startup script accumulates zombie processes
+
+**The problem:** Each failed gateway restart attempt leaves behind a zombie `start-openclaw.sh` process (stuck at its background R2 sync loop). After multiple restart attempts, you can end up with 10+ zombie bash processes.
+
+**Why it matters:** Each zombie has its own R2 sync loop running, wasting CPU and potentially causing R2 write conflicts.
+
+**The fix:** Before starting a new gateway, kill ALL orphaned startup scripts:
+```bash
+curl ".../debug/cli?cmd=pkill%20-9%20-f%20start-openclaw"
+curl ".../debug/cli?cmd=pkill%20-9%20-f%20openclaw-gateway"
+curl ".../debug/cli?cmd=rm%20-f%20/tmp/openclaw-gateway.lock%20/root/.openclaw/gateway.lock"
+```
+
+### 18.11 `DEV_MODE=true` is a skeleton key
+
+**The problem:** `DEV_MODE=true` bypasses Cloudflare Access authentication on ALL routes. Anyone who knows your worker URL has full access to the admin UI, debug endpoints, and can execute arbitrary commands inside your container.
+
+**Why it matters:** The debug CLI endpoint (`/debug/cli?cmd=...`) lets anyone run any command in your container. Combined with `DEV_MODE=true`, this means anyone on the internet can read your API keys, exfiltrate your data, or abuse your OpenRouter credits.
+
+**The fix:**
+1. Only enable `DEV_MODE=true` for the minimum time needed
+2. Immediately set it back to `false` when done
+3. If you need to debug, enable BOTH `DEV_MODE=true` AND `DEBUG_ROUTES=true`, do your work, then disable BOTH immediately
+4. Consider adding an IP allowlist to your CF Access policy as an extra layer
+
+### 18.12 You can't use `npm` or `npx` if Node.js is a portable install
+
+**The problem:** On Windows with a portable Node.js install (not in PATH), `npm`, `npx`, and `wrangler` commands don't work from the terminal. Bash scripts in `node_modules/.bin/` fail with syntax errors when run directly.
+
+**The fix:** Invoke Node.js and wrangler directly:
+```bash
+# Instead of: npx wrangler deploy
+/path/to/node.exe ./node_modules/wrangler/bin/wrangler.js deploy
+
+# Instead of: npm run build
+/path/to/node.exe ./node_modules/.bin/vite build
+```
+
+Or add Node.js to your PATH permanently.
+
+### 18.13 Moving the project folder breaks builds
+
+**The problem:** After moving the project to a different directory, `wrangler deploy` fails because `dist/` and `.wrangler/deploy/` cache absolute paths to the old location (including the Dockerfile path).
+
+**The fix:** Delete cached build artifacts after moving:
+```bash
+rm -rf dist/ .wrangler/deploy/
+npm run build  # Regenerate with correct paths
 ```
 
 ---
