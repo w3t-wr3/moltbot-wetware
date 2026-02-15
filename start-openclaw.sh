@@ -263,6 +263,7 @@ if (process.env.ANTHROPIC_API_KEY) {
     config.models.providers = config.models.providers || {};
     config.models.providers['anthropic'] = {
         baseUrl: 'https://api.anthropic.com',
+        apiKey: process.env.ANTHROPIC_API_KEY,
         api: 'anthropic-messages',
         models: [
             { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', contextWindow: 200000, maxTokens: 32000 },
