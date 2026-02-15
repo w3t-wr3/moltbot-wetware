@@ -300,7 +300,11 @@ app.all('*', async (c) => {
     }
 
     // Get WebSocket connection to the container
-    const containerResponse = await sandbox.wsConnect(wsRequest, MOLTBOT_PORT);
+    const containerResponse = await withTimeout(
+      sandbox.wsConnect(wsRequest, MOLTBOT_PORT),
+      30_000,
+      'wsConnect',
+    );
     console.log('[WS] wsConnect response status:', containerResponse.status);
 
     // Get the container-side WebSocket

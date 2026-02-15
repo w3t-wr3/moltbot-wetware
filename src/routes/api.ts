@@ -6,7 +6,11 @@ import {
   findExistingMoltbotProcess,
   syncToR2,
   waitForProcess,
+  withTimeout,
 } from '../gateway';
+
+const SANDBOX_TIMEOUT_MS = 15_000;
+const EXEC_TIMEOUT_MS = 10_000;
 
 // CLI commands can take 10-15 seconds to complete due to WebSocket connection overhead
 const CLI_TIMEOUT_MS = 20000;
@@ -39,12 +43,14 @@ adminApi.get('/devices', async (c) => {
     // Must specify --url and --token (OpenClaw v2026.2.3 requires explicit credentials with --url)
     const token = c.env.MOLTBOT_GATEWAY_TOKEN;
     const tokenArg = token ? ` --token ${token}` : '';
-    const proc = await sandbox.startProcess(
-      `openclaw devices list --json --url ws://localhost:18789${tokenArg}`,
+    const proc = await withTimeout(
+      sandbox.startProcess(`openclaw devices list --json --url ws://localhost:18789${tokenArg}`),
+      SANDBOX_TIMEOUT_MS,
+      'api: startProcess devices list',
     );
     await waitForProcess(proc, CLI_TIMEOUT_MS);
 
-    const logs = await proc.getLogs();
+    const logs = await withTimeout(proc.getLogs(), SANDBOX_TIMEOUT_MS, 'api: getLogs devices list');
     const stdout = logs.stdout || '';
     const stderr = logs.stderr || '';
 
@@ -95,12 +101,14 @@ adminApi.post('/devices/:requestId/approve', async (c) => {
     // Run OpenClaw CLI to approve the device
     const token = c.env.MOLTBOT_GATEWAY_TOKEN;
     const tokenArg = token ? ` --token ${token}` : '';
-    const proc = await sandbox.startProcess(
-      `openclaw devices approve ${requestId} --url ws://localhost:18789${tokenArg}`,
+    const proc = await withTimeout(
+      sandbox.startProcess(`openclaw devices approve ${requestId} --url ws://localhost:18789${tokenArg}`),
+      SANDBOX_TIMEOUT_MS,
+      'api: startProcess devices approve',
     );
     await waitForProcess(proc, CLI_TIMEOUT_MS);
 
-    const logs = await proc.getLogs();
+    const logs = await withTimeout(proc.getLogs(), SANDBOX_TIMEOUT_MS, 'api: getLogs devices approve');
     const stdout = logs.stdout || '';
     const stderr = logs.stderr || '';
 
@@ -131,12 +139,14 @@ adminApi.post('/devices/approve-all', async (c) => {
     // First, get the list of pending devices
     const token = c.env.MOLTBOT_GATEWAY_TOKEN;
     const tokenArg = token ? ` --token ${token}` : '';
-    const listProc = await sandbox.startProcess(
-      `openclaw devices list --json --url ws://localhost:18789${tokenArg}`,
+    const listProc = await withTimeout(
+      sandbox.startProcess(`openclaw devices list --json --url ws://localhost:18789${tokenArg}`),
+      SANDBOX_TIMEOUT_MS,
+      'api: startProcess devices list (approve-all)',
     );
     await waitForProcess(listProc, CLI_TIMEOUT_MS);
 
-    const listLogs = await listProc.getLogs();
+    const listLogs = await withTimeout(listProc.getLogs(), SANDBOX_TIMEOUT_MS, 'api: getLogs devices list (approve-all)');
     const stdout = listLogs.stdout || '';
 
     // Parse pending devices
@@ -161,14 +171,20 @@ adminApi.post('/devices/approve-all', async (c) => {
     for (const device of pending) {
       try {
         // eslint-disable-next-line no-await-in-loop -- sequential device approval required
-        const approveProc = await sandbox.startProcess(
-          `openclaw devices approve ${device.requestId} --url ws://localhost:18789${tokenArg}`,
+        const approveProc = await withTimeout(
+          sandbox.startProcess(`openclaw devices approve ${device.requestId} --url ws://localhost:18789${tokenArg}`),
+          SANDBOX_TIMEOUT_MS,
+          'api: startProcess approve ' + device.requestId,
         );
         // eslint-disable-next-line no-await-in-loop
         await waitForProcess(approveProc, CLI_TIMEOUT_MS);
 
         // eslint-disable-next-line no-await-in-loop
-        const approveLogs = await approveProc.getLogs();
+        const approveLogs = await withTimeout(
+          approveProc.getLogs(),
+          SANDBOX_TIMEOUT_MS,
+          'api: getLogs approve ' + device.requestId,
+        );
         const success =
           approveLogs.stdout?.toLowerCase().includes('approved') || approveProc.exitCode === 0;
 
@@ -212,7 +228,11 @@ adminApi.get('/storage', async (c) => {
 
   if (hasCredentials) {
     try {
-      const result = await sandbox.exec('cat /tmp/.last-sync 2>/dev/null || echo ""');
+      const result = await withTimeout(
+        sandbox.exec('cat /tmp/.last-sync 2>/dev/null || echo ""'),
+        EXEC_TIMEOUT_MS,
+        'api: exec cat last-sync',
+      );
       const timestamp = result.stdout?.trim();
       if (timestamp && timestamp !== '') {
         lastSync = timestamp;
