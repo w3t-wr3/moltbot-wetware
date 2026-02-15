@@ -2,6 +2,10 @@ import type { Sandbox } from '@cloudflare/sandbox';
 import type { MoltbotEnv } from '../types';
 import { getR2BucketName } from '../config';
 import { ensureRcloneConfig } from './r2';
+import { withTimeout } from './utils';
+
+const EXEC_TIMEOUT_MS = 10_000;
+const SYNC_TIMEOUT_MS = 120_000;
 
 export interface SyncResult {
   success: boolean;
@@ -21,9 +25,13 @@ function rcloneRemote(env: MoltbotEnv, prefix: string): string {
  * Detect which config directory exists in the container.
  */
 async function detectConfigDir(sandbox: Sandbox): Promise<string | null> {
-  const check = await sandbox.exec(
-    'test -f /root/.openclaw/openclaw.json && echo openclaw || ' +
-      '(test -f /root/.clawdbot/clawdbot.json && echo clawdbot || echo none)',
+  const check = await withTimeout(
+    sandbox.exec(
+      'test -f /root/.openclaw/openclaw.json && echo openclaw || ' +
+        '(test -f /root/.clawdbot/clawdbot.json && echo clawdbot || echo none)',
+    ),
+    EXEC_TIMEOUT_MS,
+    'sync: detectConfigDir',
   );
   const result = check.stdout?.trim();
   if (result === 'openclaw') return '/root/.openclaw';
@@ -52,9 +60,13 @@ export async function syncToR2(sandbox: Sandbox, env: MoltbotEnv): Promise<SyncR
   const remote = (prefix: string) => rcloneRemote(env, prefix);
 
   // Sync config (rclone sync propagates deletions)
-  const configResult = await sandbox.exec(
-    `rclone sync ${configDir}/ ${remote('openclaw/')} ${RCLONE_FLAGS} --exclude='*.lock' --exclude='*.log' --exclude='*.tmp' --exclude='.git/**'`,
-    { timeout: 120000 },
+  const configResult = await withTimeout(
+    sandbox.exec(
+      `rclone sync ${configDir}/ ${remote('openclaw/')} ${RCLONE_FLAGS} --exclude='*.lock' --exclude='*.log' --exclude='*.tmp' --exclude='.git/**'`,
+      { timeout: 120000 },
+    ),
+    SYNC_TIMEOUT_MS,
+    'sync: rclone config',
   );
   if (!configResult.success) {
     return {
@@ -65,20 +77,28 @@ export async function syncToR2(sandbox: Sandbox, env: MoltbotEnv): Promise<SyncR
   }
 
   // Sync workspace (non-fatal, rclone sync propagates deletions)
-  await sandbox.exec(
-    `test -d /root/clawd && rclone sync /root/clawd/ ${remote('workspace/')} ${RCLONE_FLAGS} --exclude='skills/**' --exclude='.git/**' || true`,
-    { timeout: 120000 },
+  await withTimeout(
+    sandbox.exec(
+      `test -d /root/clawd && rclone sync /root/clawd/ ${remote('workspace/')} ${RCLONE_FLAGS} --exclude='skills/**' --exclude='.git/**' || true`,
+      { timeout: 120000 },
+    ),
+    SYNC_TIMEOUT_MS,
+    'sync: rclone workspace',
   );
 
   // Sync skills (non-fatal)
-  await sandbox.exec(
-    `test -d /root/clawd/skills && rclone sync /root/clawd/skills/ ${remote('skills/')} ${RCLONE_FLAGS} || true`,
-    { timeout: 120000 },
+  await withTimeout(
+    sandbox.exec(
+      `test -d /root/clawd/skills && rclone sync /root/clawd/skills/ ${remote('skills/')} ${RCLONE_FLAGS} || true`,
+      { timeout: 120000 },
+    ),
+    SYNC_TIMEOUT_MS,
+    'sync: rclone skills',
   );
 
   // Write timestamp
-  await sandbox.exec(`date -Iseconds > ${LAST_SYNC_FILE}`);
-  const tsResult = await sandbox.exec(`cat ${LAST_SYNC_FILE}`);
+  await withTimeout(sandbox.exec(`date -Iseconds > ${LAST_SYNC_FILE}`), EXEC_TIMEOUT_MS, 'sync: write timestamp');
+  const tsResult = await withTimeout(sandbox.exec(`cat ${LAST_SYNC_FILE}`), EXEC_TIMEOUT_MS, 'sync: read timestamp');
   const lastSync = tsResult.stdout?.trim();
 
   return { success: true, lastSync };

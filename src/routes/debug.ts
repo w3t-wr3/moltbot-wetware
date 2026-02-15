@@ -1,6 +1,9 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
-import { findExistingMoltbotProcess, waitForProcess } from '../gateway';
+import { findExistingMoltbotProcess, waitForProcess, withTimeout } from '../gateway';
+
+const SANDBOX_TIMEOUT_MS = 15_000;
+const FETCH_TIMEOUT_MS = 30_000;
 
 /**
  * Debug routes for inspecting container state
@@ -14,15 +17,23 @@ debug.get('/version', async (c) => {
   const sandbox = c.get('sandbox');
   try {
     // Get OpenClaw version
-    const versionProcess = await sandbox.startProcess('openclaw --version');
+    const versionProcess = await withTimeout(
+      sandbox.startProcess('openclaw --version'),
+      SANDBOX_TIMEOUT_MS,
+      'debug: startProcess openclaw --version',
+    );
     await new Promise((resolve) => setTimeout(resolve, 500));
-    const versionLogs = await versionProcess.getLogs();
+    const versionLogs = await withTimeout(versionProcess.getLogs(), SANDBOX_TIMEOUT_MS, 'debug: getLogs version');
     const moltbotVersion = (versionLogs.stdout || versionLogs.stderr || '').trim();
 
     // Get node version
-    const nodeProcess = await sandbox.startProcess('node --version');
+    const nodeProcess = await withTimeout(
+      sandbox.startProcess('node --version'),
+      SANDBOX_TIMEOUT_MS,
+      'debug: startProcess node --version',
+    );
     await new Promise((resolve) => setTimeout(resolve, 500));
-    const nodeLogs = await nodeProcess.getLogs();
+    const nodeLogs = await withTimeout(nodeProcess.getLogs(), SANDBOX_TIMEOUT_MS, 'debug: getLogs node');
     const nodeVersion = (nodeLogs.stdout || '').trim();
 
     return c.json({
@@ -39,7 +50,7 @@ debug.get('/version', async (c) => {
 debug.get('/processes', async (c) => {
   const sandbox = c.get('sandbox');
   try {
-    const processes = await sandbox.listProcesses();
+    const processes = await withTimeout(sandbox.listProcesses(), SANDBOX_TIMEOUT_MS, 'debug: listProcesses');
     const includeLogs = c.req.query('logs') === 'true';
 
     const processData = await Promise.all(
@@ -55,7 +66,7 @@ debug.get('/processes', async (c) => {
 
         if (includeLogs) {
           try {
-            const logs = await p.getLogs();
+            const logs = await withTimeout(p.getLogs(), SANDBOX_TIMEOUT_MS, 'debug: getLogs ' + p.id);
             data.stdout = logs.stdout || '';
             data.stderr = logs.stderr || '';
           } catch {
@@ -103,7 +114,11 @@ debug.get('/gateway-api', async (c) => {
 
   try {
     const url = `http://localhost:${MOLTBOT_PORT}${path}`;
-    const response = await sandbox.containerFetch(new Request(url), MOLTBOT_PORT);
+    const response = await withTimeout(
+      sandbox.containerFetch(new Request(url), MOLTBOT_PORT),
+      FETCH_TIMEOUT_MS,
+      'debug: containerFetch ' + path,
+    );
     const contentType = response.headers.get('content-type') || '';
 
     let body: string | object;
@@ -131,10 +146,10 @@ debug.get('/cli', async (c) => {
   const cmd = c.req.query('cmd') || 'openclaw --help';
 
   try {
-    const proc = await sandbox.startProcess(cmd);
+    const proc = await withTimeout(sandbox.startProcess(cmd), SANDBOX_TIMEOUT_MS, 'debug: startProcess cli');
     await waitForProcess(proc, 120000);
 
-    const logs = await proc.getLogs();
+    const logs = await withTimeout(proc.getLogs(), SANDBOX_TIMEOUT_MS, 'debug: getLogs cli');
     const status = proc.getStatus ? await proc.getStatus() : proc.status;
     return c.json({
       command: cmd,
@@ -157,7 +172,7 @@ debug.get('/logs', async (c) => {
     let process = null;
 
     if (processId) {
-      const processes = await sandbox.listProcesses();
+      const processes = await withTimeout(sandbox.listProcesses(), SANDBOX_TIMEOUT_MS, 'debug: listProcesses logs');
       process = processes.find((p) => p.id === processId);
       if (!process) {
         return c.json(
@@ -182,7 +197,7 @@ debug.get('/logs', async (c) => {
       }
     }
 
-    const logs = await process.getLogs();
+    const logs = await withTimeout(process.getLogs(), SANDBOX_TIMEOUT_MS, 'debug: getLogs ' + process.id);
     return c.json({
       status: 'ok',
       process_id: process.id,
@@ -360,10 +375,14 @@ debug.get('/container-config', async (c) => {
   const sandbox = c.get('sandbox');
 
   try {
-    const proc = await sandbox.startProcess('cat /root/.openclaw/openclaw.json');
+    const proc = await withTimeout(
+      sandbox.startProcess('cat /root/.openclaw/openclaw.json'),
+      SANDBOX_TIMEOUT_MS,
+      'debug: startProcess cat config',
+    );
     await waitForProcess(proc, 5000);
 
-    const logs = await proc.getLogs();
+    const logs = await withTimeout(proc.getLogs(), SANDBOX_TIMEOUT_MS, 'debug: getLogs config');
     const stdout = logs.stdout || '';
     const stderr = logs.stderr || '';
 
