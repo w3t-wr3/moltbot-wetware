@@ -1,9 +1,11 @@
 import type { Sandbox } from '@cloudflare/sandbox';
 import type { MoltbotEnv } from '../types';
 import { getR2BucketName } from '../config';
+import { withTimeout } from './utils';
 
 const RCLONE_CONF_PATH = '/root/.config/rclone/rclone.conf';
 const CONFIGURED_FLAG = '/tmp/.rclone-configured';
+const EXEC_TIMEOUT_MS = 10_000;
 
 /**
  * Ensure rclone is configured in the container for R2 access.
@@ -19,9 +21,18 @@ export async function ensureRcloneConfig(sandbox: Sandbox, env: MoltbotEnv): Pro
     return false;
   }
 
-  const check = await sandbox.exec(`test -f ${CONFIGURED_FLAG} && echo yes || echo no`);
-  if (check.stdout?.trim() === 'yes') {
-    return true;
+  try {
+    const check = await withTimeout(
+      sandbox.exec(`test -f ${CONFIGURED_FLAG} && echo yes || echo no`),
+      EXEC_TIMEOUT_MS,
+      'rclone config check',
+    );
+    if (check.stdout?.trim() === 'yes') {
+      return true;
+    }
+  } catch (e) {
+    console.error('Failed to check rclone config:', e);
+    return false;
   }
 
   const rcloneConfig = [
@@ -35,10 +46,18 @@ export async function ensureRcloneConfig(sandbox: Sandbox, env: MoltbotEnv): Pro
     'no_check_bucket = true',
   ].join('\n');
 
-  await sandbox.exec(`mkdir -p $(dirname ${RCLONE_CONF_PATH})`);
-  await sandbox.writeFile(RCLONE_CONF_PATH, rcloneConfig);
-  await sandbox.exec(`touch ${CONFIGURED_FLAG}`);
-
-  console.log('Rclone configured for R2 bucket:', getR2BucketName(env));
-  return true;
+  try {
+    await withTimeout(
+      sandbox.exec(`mkdir -p $(dirname ${RCLONE_CONF_PATH})`),
+      EXEC_TIMEOUT_MS,
+      'rclone mkdir',
+    );
+    await withTimeout(sandbox.writeFile(RCLONE_CONF_PATH, rcloneConfig), EXEC_TIMEOUT_MS, 'rclone writeFile');
+    await withTimeout(sandbox.exec(`touch ${CONFIGURED_FLAG}`), EXEC_TIMEOUT_MS, 'rclone touch flag');
+    console.log('Rclone configured for R2 bucket:', getR2BucketName(env));
+    return true;
+  } catch (e) {
+    console.error('Failed to configure rclone:', e);
+    return false;
+  }
 }
