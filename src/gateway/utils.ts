@@ -25,3 +25,25 @@ export async function waitForProcess(
     attempts++;
   }
 }
+
+/**
+ * Race a promise against a timeout. If the promise doesn't resolve in time,
+ * rejects with a TimeoutError so the caller can recover instead of hanging forever.
+ */
+export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`Timeout after ${ms}ms: ${label}`));
+    }, ms);
+    promise.then(
+      (val) => {
+        clearTimeout(timer);
+        resolve(val);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}

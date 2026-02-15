@@ -3,6 +3,13 @@ import type { MoltbotEnv } from '../types';
 import { MOLTBOT_PORT, STARTUP_TIMEOUT_MS } from '../config';
 import { buildEnvVars } from './env';
 import { ensureRcloneConfig } from './r2';
+import { withTimeout } from './utils';
+
+/** Max time to wait for sandbox.listProcesses() before giving up */
+const LIST_PROCESSES_TIMEOUT_MS = 15_000;
+
+/** Max time to wait for sandbox.startProcess() before giving up */
+const START_PROCESS_TIMEOUT_MS = 30_000;
 
 /**
  * Find an existing OpenClaw gateway process
@@ -12,7 +19,11 @@ import { ensureRcloneConfig } from './r2';
  */
 export async function findExistingMoltbotProcess(sandbox: Sandbox): Promise<Process | null> {
   try {
-    const processes = await sandbox.listProcesses();
+    const processes = await withTimeout(
+      sandbox.listProcesses(),
+      LIST_PROCESSES_TIMEOUT_MS,
+      'sandbox.listProcesses()',
+    );
     for (const proc of processes) {
       // Match gateway process (openclaw gateway or legacy clawdbot gateway)
       // Don't match CLI commands like "openclaw devices list"
@@ -99,9 +110,13 @@ export async function ensureMoltbotGateway(sandbox: Sandbox, env: MoltbotEnv): P
 
   let process: Process;
   try {
-    process = await sandbox.startProcess(command, {
-      env: Object.keys(envVars).length > 0 ? envVars : undefined,
-    });
+    process = await withTimeout(
+      sandbox.startProcess(command, {
+        env: Object.keys(envVars).length > 0 ? envVars : undefined,
+      }),
+      START_PROCESS_TIMEOUT_MS,
+      'sandbox.startProcess()',
+    );
     console.log('Process started with id:', process.id, 'status:', process.status);
   } catch (startErr) {
     console.error('Failed to start process:', startErr);

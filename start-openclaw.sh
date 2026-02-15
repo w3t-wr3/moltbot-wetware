@@ -99,6 +99,25 @@ else
 fi
 
 # ============================================================
+# CLEAN UP LARGE SESSION FILES (prevents slow cold starts)
+# ============================================================
+SESSIONS_DIR="$CONFIG_DIR/agents/main/sessions"
+if [ -d "$SESSIONS_DIR" ]; then
+    # Delete session files larger than 2MB - they cause multi-minute compactions
+    LARGE=$(find "$SESSIONS_DIR" -name '*.jsonl' -size +2M 2>/dev/null)
+    if [ -n "$LARGE" ]; then
+        echo "Cleaning up large session files to prevent slow startup:"
+        echo "$LARGE" | while read -r f; do
+            SIZE=$(du -h "$f" | cut -f1)
+            echo "  Removing $f ($SIZE)"
+            rm -f "$f"
+        done
+    fi
+    # Also clean up .reset backup files
+    find "$SESSIONS_DIR" -name '*.reset.*' -delete 2>/dev/null || true
+fi
+
+# ============================================================
 # ONBOARD (only if no config exists yet)
 # ============================================================
 if [ ! -f "$CONFIG_FILE" ]; then
@@ -364,6 +383,13 @@ if r2_configured; then
                 date -Iseconds > "$LAST_SYNC_FILE"
                 touch "$MARKER"
                 echo "[sync] Complete at $(date)" >> "$LOGFILE"
+            fi
+
+            # Always sync gateway logs to R2 (even if no config changes)
+            # This preserves crash logs for post-mortem debugging
+            if [ -d "/tmp/openclaw" ]; then
+                rclone copy "/tmp/openclaw/" "r2:${R2_BUCKET}/logs/" \
+                    $RCLONE_FLAGS --include='*.log' 2>> "$LOGFILE" || true
             fi
         done
     ) &
