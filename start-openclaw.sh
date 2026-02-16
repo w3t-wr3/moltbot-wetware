@@ -60,18 +60,6 @@ RCLONE_FLAGS="--transfers=16 --fast-list --s3-no-check-bucket"
 if r2_configured; then
     setup_rclone
 
-    # Background cleanup: purge node_modules and .git directories from R2
-    # These bloat restores (15K+ files) and overload the sync loop
-    # Runs in background so it doesn't block gateway startup
-    (
-        echo "[cleanup] Purging node_modules from R2..."
-        rclone delete "r2:${R2_BUCKET}/" $RCLONE_FLAGS --include='**/node_modules/**' 2>&1
-        echo "[cleanup] Purging .git from R2..."
-        rclone delete "r2:${R2_BUCKET}/" $RCLONE_FLAGS --include='**/.git/**' 2>&1
-        echo "[cleanup] R2 cleanup done"
-    ) &
-    echo "R2 cleanup started in background (PID: $!)"
-
     echo "Checking R2 for existing backup..."
     # Check if R2 has an openclaw config backup
     if rclone ls "r2:${R2_BUCKET}/openclaw/openclaw.json" $RCLONE_FLAGS 2>/dev/null | grep -q openclaw.json; then
