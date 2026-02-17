@@ -355,7 +355,7 @@ if r2_configured; then
         touch "$MARKER"
 
         while true; do
-            sleep 30
+            sleep 120
 
             CHANGED=/tmp/.changed-files
             {
@@ -370,15 +370,17 @@ if r2_configured; then
 
             if [ "$COUNT" -gt 0 ]; then
                 echo "[sync] Uploading changes ($COUNT files) at $(date)" >> "$LOGFILE"
-                rclone sync "$CONFIG_DIR/" "r2:${R2_BUCKET}/openclaw/" \
-                    $RCLONE_FLAGS --exclude='*.lock' --exclude='*.log' --exclude='*.tmp' --exclude='.git/**' --exclude='browser/**' 2>> "$LOGFILE"
+                # Use rclone copy for config (upload only, no expensive R2 listing)
+                rclone copy "$CONFIG_DIR/" "r2:${R2_BUCKET}/openclaw/" \
+                    $RCLONE_FLAGS --max-backlog=1000 --exclude='*.lock' --exclude='*.log' --exclude='*.tmp' --exclude='.git/**' --exclude='browser/**' 2>> "$LOGFILE"
+                # Use rclone sync for workspace/skills (propagate deletions)
                 if [ -d "$WORKSPACE_DIR" ]; then
                     rclone sync "$WORKSPACE_DIR/" "r2:${R2_BUCKET}/workspace/" \
-                        $RCLONE_FLAGS --exclude='skills/**' --exclude='**/.git/**' --exclude='**/node_modules/**' 2>> "$LOGFILE"
+                        $RCLONE_FLAGS --max-backlog=1000 --exclude='skills/**' --exclude='**/.git/**' --exclude='**/node_modules/**' 2>> "$LOGFILE"
                 fi
                 if [ -d "$SKILLS_DIR" ]; then
                     rclone sync "$SKILLS_DIR/" "r2:${R2_BUCKET}/skills/" \
-                        $RCLONE_FLAGS --exclude='**/node_modules/**' --exclude='**/.git/**' 2>> "$LOGFILE"
+                        $RCLONE_FLAGS --max-backlog=1000 --exclude='**/node_modules/**' --exclude='**/.git/**' 2>> "$LOGFILE"
                 fi
                 date -Iseconds > "$LAST_SYNC_FILE"
                 touch "$MARKER"
@@ -407,10 +409,36 @@ rm -f "$CONFIG_DIR/gateway.lock" 2>/dev/null || true
 
 echo "Dev mode: ${OPENCLAW_DEV_MODE:-false}"
 
-if [ -n "$OPENCLAW_GATEWAY_TOKEN" ]; then
-    echo "Starting gateway with token auth..."
-    exec openclaw gateway --port 18789 --verbose --allow-unconfigured --bind lan --token "$OPENCLAW_GATEWAY_TOKEN"
-else
-    echo "Starting gateway with device pairing (no token)..."
-    exec openclaw gateway --port 18789 --verbose --allow-unconfigured --bind lan
-fi
+# Cap V8 heap at 2 GiB, leaving ~2 GiB for rclone, OS, etc.
+export NODE_OPTIONS="--max-old-space-size=2048"
+
+RESTART_COUNT=0
+MAX_RESTARTS=10
+RESTART_WINDOW_START=$(date +%s)
+
+while true; do
+    # Reset counter every hour
+    NOW=$(date +%s)
+    if [ $((NOW - RESTART_WINDOW_START)) -gt 3600 ]; then
+        RESTART_COUNT=0
+        RESTART_WINDOW_START=$NOW
+    fi
+
+    if [ $RESTART_COUNT -ge $MAX_RESTARTS ]; then
+        echo "Gateway crashed $MAX_RESTARTS times in 1 hour, giving up"
+        exit 1
+    fi
+
+    echo "[$(date)] Starting gateway (attempt $((RESTART_COUNT + 1)))..."
+
+    if [ -n "$OPENCLAW_GATEWAY_TOKEN" ]; then
+        openclaw gateway --port 18789 --verbose --allow-unconfigured --bind lan --token "$OPENCLAW_GATEWAY_TOKEN"
+    else
+        openclaw gateway --port 18789 --verbose --allow-unconfigured --bind lan
+    fi
+
+    EXIT_CODE=$?
+    RESTART_COUNT=$((RESTART_COUNT + 1))
+    echo "[$(date)] Gateway exited with code $EXIT_CODE, restarting in 5s..."
+    sleep 5
+done
