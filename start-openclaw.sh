@@ -429,6 +429,14 @@ while true; do
         exit 1
     fi
 
+    # Kill any orphaned gateway processes (OpenClaw's SIGUSR1 restart spawns
+    # a child that outlives the parent, causing "port already in use" on our restart)
+    pkill -f "openclaw gateway" 2>/dev/null || true
+    sleep 1
+    # Also kill any node process holding port 18789
+    fuser -k 18789/tcp 2>/dev/null || true
+    rm -f /tmp/openclaw-gateway.lock "$CONFIG_DIR/gateway.lock" 2>/dev/null || true
+
     echo "[$(date)] Starting gateway (attempt $((RESTART_COUNT + 1)))..."
 
     if [ -n "$OPENCLAW_GATEWAY_TOKEN" ]; then
