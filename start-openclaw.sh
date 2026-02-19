@@ -64,7 +64,7 @@ if r2_configured; then
     # Check if R2 has an openclaw config backup
     if rclone ls "r2:${R2_BUCKET}/openclaw/openclaw.json" $RCLONE_FLAGS 2>/dev/null | grep -q openclaw.json; then
         echo "Restoring config from R2..."
-        rclone copy "r2:${R2_BUCKET}/openclaw/" "$CONFIG_DIR/" $RCLONE_FLAGS --exclude='browser/**' -v 2>&1 || echo "WARNING: config restore failed with exit code $?"
+        rclone copy "r2:${R2_BUCKET}/openclaw/" "$CONFIG_DIR/" $RCLONE_FLAGS --exclude='browser/**' --exclude='**/node_modules/**' --exclude='workspace/**' -v 2>&1 || echo "WARNING: config restore failed with exit code $?"
         echo "Config restored"
     elif rclone ls "r2:${R2_BUCKET}/clawdbot/clawdbot.json" $RCLONE_FLAGS 2>/dev/null | grep -q clawdbot.json; then
         echo "Restoring from legacy R2 backup..."
